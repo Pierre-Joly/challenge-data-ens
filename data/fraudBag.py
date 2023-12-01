@@ -27,6 +27,14 @@ def getOccurence(df_X_items: List[str]) -> Dict[str, int]:
             dict[item] = 1
     return dict
 
+def count_unique_items_across_columns(df: pd.DataFrame, base_columns: List[str], n: int) -> Dict[str, int]:
+    unique_counts = {}
+    for base_col in base_columns:
+        combined_series = pd.Series(dtype=str)
+        for i in range(1, n + 1):
+            combined_series = combined_series.append(df[base_col + str(i)])
+        unique_counts[base_col] = combined_series.nunique()
+    return unique_counts
 
 def selectItems(dict: Dict[str, int], threshold: int) -> Dict[str, int]:
     dict = {k: v for k, v in dict.items() if v > threshold}
@@ -129,3 +137,11 @@ if __name__ == '__main__':
         top_present_gen))
     print("Top 5 des objets qui apparaissent dans plus de 5% des paniers frauduleux sachant qu'ils sont présents : ", list(
         top_fraud_si_present))
+    
+    # I want to get the number of different items in each categorical column
+    base_columns = ['item', 'make', 'model', 'goods_code']  # Base names of your categorical columns
+    n = 24  # Number of instances for each category
+    unique_item_counts = count_unique_items_across_columns(df_X_train, base_columns, n)
+    print(unique_item_counts)
+    
+
