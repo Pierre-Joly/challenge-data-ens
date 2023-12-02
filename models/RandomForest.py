@@ -5,102 +5,136 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import average_precision_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.compose import ColumnTransformer
-from tensorflow.keras.preprocessing.text import Tokenizer
-from sklearn.base import BaseEstimator, TransformerMixin
 import gensim.downloader as api
 import logging
+import xgboost as xgb
 
 # Initialize logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Define the Word2Vec transformer class
-class W2V(BaseEstimator, TransformerMixin):
-    def __init__(self, num_words=None, **kwargs):
-        self.num_words = num_words
-        self.tokenizer = Tokenizer(num_words=num_words, **kwargs)
+Word2V = api.load("word2vec-google-news-300")
 
-    def fit(self, X, y=None):
-        self.Word2 = api.load("word2vec-google-news-300")
-        return self
+def get_w2v_vector(sentence, model):
+    vec = np.zeros(300)
+    try:
+        for word in sentence.split():
+            if word in model.key_to_index:
+                vec += model[word]
+    except:
+        return vec
+    return vec / len(sentence.split())
 
-    def transform(self, X, y=None):
-        x = np.array(X.values)
-        for i in range(len(x)):
-            for j in range(len(x[i])):
-                tokens = x[i][j].split()
-                embeddings = [self.Word2[token] for token in tokens if token in self.Word2.key_to_index]
-                if len(embeddings) > 0:
-                    mean = np.mean(embeddings)
-                else:
-                    mean = 0
-                x[i][j] = mean
-        return x
+X_path = 'data/X_train.csv'
+Y_path = 'data/Y_train.csv'
 
+n = 25
 
-    def get_params(self, deep=True):
-        return {"num_words": self.num_words}
+X = pd.read_csv(X_path)
+y = pd.read_csv(Y_path)
+y = y.drop(['index', 'ID'], axis=1)
 
-# Load the dataset
-X_train_file = 'data/X_train.csv'
-y_train_file = 'data/Y_train.csv'
+start = 5
 
-with open(X_train_file, 'r') as f:
-    mixed_columns = ['item' + str(i) for i in range(1, 25)] + ['make' + str(i) for i in range(1, 25)] + ['model' + str(i) for i in range(1, 25)] + ['goods_code' + str(i) for i in range(1, 25)]
-    mixed_columns_dtype = {col: str for col in mixed_columns}
-    X_train_df = pd.read_csv(X_train_file, dtype=mixed_columns_dtype)
+mixed_columns = ['item' + str(i) for i in range(start, n)] + \
+                ['make' + str(i) for i in range(start, n)] + \
+                ['model' + str(i) for i in range(start, n)] + \
+                ['goods_code' + str(i) for i in range(start, n)] + \
+                ['Nbr_of_prod_purchas' + str(i) for i in range(start, n)] + \
+                ['cash_price' + str(i) for i in range(start, n)]
 
-with open(y_train_file, 'r') as f:
-    y_train_df = pd.read_csv(f)
+X = X.drop(mixed_columns, axis=1)
 
-cols_base = ['goods_code']
-columns_to_drop = ['ID'] + [col + str(i) for col in cols_base for i in range(1, 25)]
+mixed_columns = ['item' + str(i) for i in range(1, n)] + \
+                ['make' + str(i) for i in range(1, n)] + \
+                ['model' + str(i) for i in range(1, n)] + \
+                ['goods_code' + str(i) for i in range(1, n)]
 
-X_train_df = X_train_df.drop(columns_to_drop, axis=1)
-y_train_df = y_train_df['fraud_flag']
+n = start
+df = X
+categorical_columns = ['item', 'make', 'model']
+categorical_columns = [col+str(i) for col in categorical_columns for i in range(1, n)]
 
-# Identify the columns to apply RNN tokenization
-rnn_columns = ['make', 'item', 'model']  # Add more columns as needed
-rnn_columns = [col + str(i) for col in rnn_columns for i in range(1, 25)]
+for col in df.columns:
+    if col in categorical_columns:  # Define your list of categorical columns
+        # Apply Word2Vec transformation and split into separate columns
+        w2v_df = df[col].apply(lambda x: pd.Series(get_w2v_vector(x, Word2V), dtype=np.float32))
 
-# Identify the categorical and numerical columns
-categorical_columns = rnn_columns
-numerical_columns = [col for col in X_train_df.columns if col not in categorical_columns]
+        # Rename new columns
+        w2v_df.columns = [f'{col}_w2v_{i}' for i in range(300)]
 
-# Clean data
-for col in categorical_columns:
-    X_train_df[col] = X_train_df[col].fillna('')
-for col in numerical_columns:
-    X_train_df[col] = X_train_df[col].fillna(0)
+        # Concatenate with original DataFrame
+        df = pd.concat([df, w2v_df], axis=1)
 
-# Define transformers
-cat_pipeline = make_pipeline(W2V())
-num_pipeline = make_pipeline(StandardScaler())
+        # Optionally, drop the original categorical column
+        df = df.drop(col, axis=1)
+    elif col in mixed_columns:
+        df = df.drop(col, axis=1)
 
-# Create the preprocessor
-preprocessor = ColumnTransformer(transformers=[
-    ('cat_pipeline', cat_pipeline, categorical_columns),
-    ('num_pipeline', num_pipeline, numerical_columns)
-])
+# Assuming df is your DataFrame
+# Compute mean and standard deviation for each type of numerical column
+cash_price_cols = [f'cash_price{i}' for i in range(1, n)]
+nbr_of_prod_purchas_cols = [f'Nbr_of_prod_purchas{i}' for i in range(1, n)]
+
+# Replace NaN values with 0
+for col in cash_price_cols + nbr_of_prod_purchas_cols:
+    df[col].fillna(0, inplace=True)
+
+cash_price_mean = df[cash_price_cols].values.flatten().mean()
+cash_price_std = df[cash_price_cols].values.flatten().std()
+
+nbr_of_prod_purchas_mean = df[nbr_of_prod_purchas_cols].values.flatten().mean()
+nbr_of_prod_purchas_std = df[nbr_of_prod_purchas_cols].values.flatten().std()
+
+# Normalize the columns
+for col in cash_price_cols:
+    df[col] = (df[col] - cash_price_mean) / cash_price_std
+
+for col in nbr_of_prod_purchas_cols:
+    df[col] = (df[col] - nbr_of_prod_purchas_mean) / nbr_of_prod_purchas_std
+
+X_train_df = df
+y_train_df = y
 
 # Define models and their respective hyperparameters
-rf_classifier = RandomForestClassifier(n_estimators=500, random_state=42)
+"""
+xgb_classifier = xgb.XGBClassifier(
+    n_estimators=500,          # Number of gradient boosted trees. Equivalent to number of boosting rounds
+    learning_rate=0.05,         # Step size shrinkage used to prevent overfitting
+    max_depth=4,               # Maximum tree depth for base learners
+    min_child_weight=1,        # Minimum sum of instance weight (hessian) needed in a child
+    gamma=0,                   # Minimum loss reduction required to make a further partition on a leaf node of the tree
+    subsample=0.8,             # Subsample ratio of the training instances
+    colsample_bytree=0.8,      # Subsample ratio of columns when constructing each tree
+    objective='binary:logistic', # Learning task parameter and the corresponding learning objective
+    reg_alpha=0.1,             # L1 regularization term on weights
+    reg_lambda=1,              # L2 regularization term on weights
+    scale_pos_weight=1,        # Balancing of positive and negative weights
+    random_state=42            # Random number seed
+)
+"""
+rf_classifier = RandomForestClassifier(
+    n_estimators=500,
+    random_state=42,
+)
+#rf_classifier = xgb_classifier
 
 # Create the pipeline
 pipeline = make_pipeline(
-    preprocessor,
     rf_classifier
 )
 
 # Split the data into training and validation sets
 X_train, X_val, y_train, y_val = train_test_split(X_train_df, y_train_df, test_size=0.3, random_state=42)
-
 # Fit the pipeline
 pipeline.fit(X_train, y_train)
 
 # Evaluate the pipeline using average_precision_score
+print("Train score")
+y_pred = pipeline.predict_proba(X_train)
+average_precision = average_precision_score(y_train, y_pred[:, 1]) * 100
+logger.info(f"Average precision score: {average_precision}")
+print("Test score")
 y_pred = pipeline.predict_proba(X_val)
 average_precision = average_precision_score(y_val, y_pred[:, 1]) * 100
 logger.info(f"Average precision score: {average_precision}")
@@ -111,8 +145,73 @@ model_filename = "trained_rf_classifier.pkl"
 joblib.dump(pipeline, model_filename)
 logger.info(f"Trained model saved as {model_filename}")
 
-# Load and use the trained model for predictions
-loaded_pipeline = joblib.load(model_filename)
-sample_input = X_val.iloc[:5, :]  # Take a sample input for prediction
-sample_output = loaded_pipeline.predict_proba(sample_input)
-logger.info(f"Sample input predictions: {sample_output}")
+##### Prediction #####
+n = 25
+
+# Save prediction
+X = pd.read_csv('data/X_test.csv')
+
+start = 5
+
+mixed_columns = ['item' + str(i) for i in range(start, n)] + \
+                ['make' + str(i) for i in range(start, n)] + \
+                ['model' + str(i) for i in range(start, n)] + \
+                ['goods_code' + str(i) for i in range(start, n)] + \
+                ['Nbr_of_prod_purchas' + str(i) for i in range(start, n)] + \
+                ['cash_price' + str(i) for i in range(start, n)]
+
+X = X.drop(mixed_columns, axis=1)
+
+mixed_columns = ['item' + str(i) for i in range(1, n)] + \
+                ['make' + str(i) for i in range(1, n)] + \
+                ['model' + str(i) for i in range(1, n)] + \
+                ['goods_code' + str(i) for i in range(1, n)]
+
+n = start
+df = X
+categorical_columns = ['item', 'make', 'model']
+categorical_columns = [col+str(i) for col in categorical_columns for i in range(1, n)]
+
+for col in df.columns:
+    if col in categorical_columns:  # Define your list of categorical columns
+        # Apply Word2Vec transformation and split into separate columns
+        w2v_df = df[col].apply(lambda x: pd.Series(get_w2v_vector(x, Word2V), dtype=np.float32))
+
+        # Rename new columns
+        w2v_df.columns = [f'{col}_w2v_{i}' for i in range(300)]
+
+        # Concatenate with original DataFrame
+        df = pd.concat([df, w2v_df], axis=1)
+
+        # Optionally, drop the original categorical column
+        df = df.drop(col, axis=1)
+    elif col in mixed_columns:
+        df = df.drop(col, axis=1)
+
+# Assuming df is your DataFrame
+# Compute mean and standard deviation for each type of numerical column
+cash_price_cols = [f'cash_price{i}' for i in range(1, n)]
+nbr_of_prod_purchas_cols = [f'Nbr_of_prod_purchas{i}' for i in range(1, n)]
+
+# Replace NaN values with 0
+for col in cash_price_cols + nbr_of_prod_purchas_cols:
+    df[col].fillna(0, inplace=True)
+
+# Normalize the columns
+for col in cash_price_cols:
+    df[col] = (df[col] - cash_price_mean) / cash_price_std
+
+for col in nbr_of_prod_purchas_cols:
+    df[col] = (df[col] - nbr_of_prod_purchas_mean) / nbr_of_prod_purchas_std
+
+X = df
+
+y_pred = pipeline.predict_proba(X)[:, 1]  # Get the probability of the positive class
+# Create a DataFrame for predictions
+prediction_df = pd.DataFrame({
+    'ID': X['ID'],  # Replace 'ID' with the actual ID column name in your validation set
+    'fraud_flag': y_pred
+})
+prediction_df.reset_index(inplace=True)
+prediction_df = prediction_df.rename(columns={'index': 'index'})
+prediction_df.to_csv('data/y_pred.csv', index=False)

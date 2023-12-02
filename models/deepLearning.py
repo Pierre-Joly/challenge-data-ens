@@ -26,7 +26,7 @@ class PositionalEncoding(nn.Module):
         return x
 
 class FocalLoss(nn.Module):
-    def __init__(self, alpha=0, gamma=2.0, reduction='mean'):
+    def __init__(self, alpha=0.999, gamma=4.0, reduction='mean'):
         super(FocalLoss, self).__init__()
         self.alpha = alpha
         self.gamma = gamma
@@ -216,7 +216,7 @@ def main():
     best_test_loss = float('inf')
     epochs_without_improvement = 0
 
-    criterion = FocalLoss()
+    criterion = FocalLoss(alpha=1e-3, gamma=10)
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-2)
     scheduler = CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=1e-5)
 
@@ -248,7 +248,7 @@ def main():
             data = data.long().to(device)
             output = model(data)
             a = max(a, float(torch.sigmoid(output).max()))
-            preds = (torch.sigmoid(output) > 0.5)
+            preds = (torch.sigmoid(output) > 0.4)
             y_pred.extend(preds.cpu().numpy())
             y_true.extend(target.cpu().numpy())
 
