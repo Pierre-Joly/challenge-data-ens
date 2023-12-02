@@ -25,76 +25,83 @@ def get_w2v_vector(sentence, model):
         return vec
     return vec / len(sentence.split())
 
-X_path = 'data/X_train.csv'
-Y_path = 'data/Y_train.csv'
+def preprocess(X_path,
+            Y_path,
+            cash_price_mean=None,
+            cash_price_std=None,
+            nbr_of_prod_purchas_mean=None,
+            nbr_of_prod_purchas_std=None):
+    
+    X_path = X_path
+    Y_path = Y_path
 
-n = 25
+    n = 25
+    X = pd.read_csv(X_path)
+    y = pd.read_csv(Y_path)
+    y = y.drop(['index', 'ID'], axis=1)
 
-X = pd.read_csv(X_path)
-y = pd.read_csv(Y_path)
-y = y.drop(['index', 'ID'], axis=1)
-
-start = 5
-
-mixed_columns = ['item' + str(i) for i in range(start, n)] + \
+    start = 5
+    columns = ['item' + str(i) for i in range(start, n)] + \
                 ['make' + str(i) for i in range(start, n)] + \
                 ['model' + str(i) for i in range(start, n)] + \
                 ['goods_code' + str(i) for i in range(start, n)] + \
                 ['Nbr_of_prod_purchas' + str(i) for i in range(start, n)] + \
                 ['cash_price' + str(i) for i in range(start, n)]
 
-X = X.drop(mixed_columns, axis=1)
+    X = X.drop(columns, axis=1)
 
-mixed_columns = ['item' + str(i) for i in range(1, n)] + \
+    columns = ['item' + str(i) for i in range(1, n)] + \
                 ['make' + str(i) for i in range(1, n)] + \
                 ['model' + str(i) for i in range(1, n)] + \
                 ['goods_code' + str(i) for i in range(1, n)]
+    
+    n = start
+    df = X
+    categorical_columns = ['item', 'make', 'model']
+    categorical_columns = [col+str(i) for col in categorical_columns for i in range(1, n)]
 
-n = start
-df = X
-categorical_columns = ['item', 'make', 'model']
-categorical_columns = [col+str(i) for col in categorical_columns for i in range(1, n)]
+    for col in df.columns:
+        if col in categorical_columns:  # Define your list of categorical columns
+            # Apply Word2Vec transformation and split into separate columns
+            w2v_df = df[col].apply(lambda x: pd.Series(get_w2v_vector(x, Word2V), dtype=np.float32))
 
-for col in df.columns:
-    if col in categorical_columns:  # Define your list of categorical columns
-        # Apply Word2Vec transformation and split into separate columns
-        w2v_df = df[col].apply(lambda x: pd.Series(get_w2v_vector(x, Word2V), dtype=np.float32))
+            # Rename new columns
+            w2v_df.columns = [f'{col}_w2v_{i}' for i in range(300)]
 
-        # Rename new columns
-        w2v_df.columns = [f'{col}_w2v_{i}' for i in range(300)]
+            # Concatenate with original DataFrame
+            df = pd.concat([df, w2v_df], axis=1)
 
-        # Concatenate with original DataFrame
-        df = pd.concat([df, w2v_df], axis=1)
+            # Optionally, drop the original categorical column
+            df = df.drop(col, axis=1)
+        elif col in columns:
+            df = df.drop(col, axis=1)
 
-        # Optionally, drop the original categorical column
-        df = df.drop(col, axis=1)
-    elif col in mixed_columns:
-        df = df.drop(col, axis=1)
+    # Assuming df is your DataFrame
+    # Compute mean and standard deviation for each type of numerical column
+    cash_price_cols = [f'cash_price{i}' for i in range(1, n)]
+    nbr_of_prod_purchas_cols = [f'Nbr_of_prod_purchas{i}' for i in range(1, n)]
 
-# Assuming df is your DataFrame
-# Compute mean and standard deviation for each type of numerical column
-cash_price_cols = [f'cash_price{i}' for i in range(1, n)]
-nbr_of_prod_purchas_cols = [f'Nbr_of_prod_purchas{i}' for i in range(1, n)]
+    # Replace NaN values with 0
+    for col in cash_price_cols + nbr_of_prod_purchas_cols:
+        df[col].fillna(0, inplace=True)
 
-# Replace NaN values with 0
-for col in cash_price_cols + nbr_of_prod_purchas_cols:
-    df[col].fillna(0, inplace=True)
+    if cash_price_mean is None:
+        cash_price_mean = df[cash_price_cols].values.flatten().mean()
+        cash_price_std = df[cash_price_cols].values.flatten().std()
 
-cash_price_mean = df[cash_price_cols].values.flatten().mean()
-cash_price_std = df[cash_price_cols].values.flatten().std()
+        nbr_of_prod_purchas_mean = df[nbr_of_prod_purchas_cols].values.flatten().mean()
+        nbr_of_prod_purchas_std = df[nbr_of_prod_purchas_cols].values.flatten().std()
 
-nbr_of_prod_purchas_mean = df[nbr_of_prod_purchas_cols].values.flatten().mean()
-nbr_of_prod_purchas_std = df[nbr_of_prod_purchas_cols].values.flatten().std()
+    # Normalize the columns
+    for col in cash_price_cols:
+        df[col] = (df[col] - cash_price_mean) / cash_price_std
 
-# Normalize the columns
-for col in cash_price_cols:
-    df[col] = (df[col] - cash_price_mean) / cash_price_std
+    for col in nbr_of_prod_purchas_cols:
+        df[col] = (df[col] - nbr_of_prod_purchas_mean) / nbr_of_prod_purchas_std
 
-for col in nbr_of_prod_purchas_cols:
-    df[col] = (df[col] - nbr_of_prod_purchas_mean) / nbr_of_prod_purchas_std
+    return df, y, cash_price_mean, cash_price_std, nbr_of_prod_purchas_mean, nbr_of_prod_purchas_std
 
-X_train_df = df
-y_train_df = y
+X_train_df, y_train_df, cash_price_mean, cash_price_std, nbr_of_prod_purchas_mean, nbr_of_prod_purchas_std = preprocess('data/X_train.csv', 'data/y_train.csv')
 
 # Define models and their respective hyperparameters
 """
@@ -146,65 +153,8 @@ joblib.dump(pipeline, model_filename)
 logger.info(f"Trained model saved as {model_filename}")
 
 ##### Prediction #####
-n = 25
-
 # Save prediction
-X = pd.read_csv('data/X_test.csv')
-
-start = 5
-
-mixed_columns = ['item' + str(i) for i in range(start, n)] + \
-                ['make' + str(i) for i in range(start, n)] + \
-                ['model' + str(i) for i in range(start, n)] + \
-                ['goods_code' + str(i) for i in range(start, n)] + \
-                ['Nbr_of_prod_purchas' + str(i) for i in range(start, n)] + \
-                ['cash_price' + str(i) for i in range(start, n)]
-
-X = X.drop(mixed_columns, axis=1)
-
-mixed_columns = ['item' + str(i) for i in range(1, n)] + \
-                ['make' + str(i) for i in range(1, n)] + \
-                ['model' + str(i) for i in range(1, n)] + \
-                ['goods_code' + str(i) for i in range(1, n)]
-
-n = start
-df = X
-categorical_columns = ['item', 'make', 'model']
-categorical_columns = [col+str(i) for col in categorical_columns for i in range(1, n)]
-
-for col in df.columns:
-    if col in categorical_columns:  # Define your list of categorical columns
-        # Apply Word2Vec transformation and split into separate columns
-        w2v_df = df[col].apply(lambda x: pd.Series(get_w2v_vector(x, Word2V), dtype=np.float32))
-
-        # Rename new columns
-        w2v_df.columns = [f'{col}_w2v_{i}' for i in range(300)]
-
-        # Concatenate with original DataFrame
-        df = pd.concat([df, w2v_df], axis=1)
-
-        # Optionally, drop the original categorical column
-        df = df.drop(col, axis=1)
-    elif col in mixed_columns:
-        df = df.drop(col, axis=1)
-
-# Assuming df is your DataFrame
-# Compute mean and standard deviation for each type of numerical column
-cash_price_cols = [f'cash_price{i}' for i in range(1, n)]
-nbr_of_prod_purchas_cols = [f'Nbr_of_prod_purchas{i}' for i in range(1, n)]
-
-# Replace NaN values with 0
-for col in cash_price_cols + nbr_of_prod_purchas_cols:
-    df[col].fillna(0, inplace=True)
-
-# Normalize the columns
-for col in cash_price_cols:
-    df[col] = (df[col] - cash_price_mean) / cash_price_std
-
-for col in nbr_of_prod_purchas_cols:
-    df[col] = (df[col] - nbr_of_prod_purchas_mean) / nbr_of_prod_purchas_std
-
-X = df
+X, _, _, _, _, _ = preprocess('data/X_test.csv', 'data/y_test.csv', cash_price_mean, cash_price_std, nbr_of_prod_purchas_mean, nbr_of_prod_purchas_std)
 
 y_pred = pipeline.predict_proba(X)[:, 1]  # Get the probability of the positive class
 # Create a DataFrame for predictions
