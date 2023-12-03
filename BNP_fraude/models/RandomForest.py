@@ -104,35 +104,30 @@ def preprocess(X_path,
 X_train_df, y_train_df, cash_price_mean, cash_price_std, nbr_of_prod_purchas_mean, nbr_of_prod_purchas_std = preprocess('data/X_train.csv', 'data/y_train.csv')
 
 # Define models and their respective hyperparameters
-"""
+
 xgb_classifier = xgb.XGBClassifier(
-    n_estimators=500,          # Number of gradient boosted trees. Equivalent to number of boosting rounds
-    learning_rate=0.05,         # Step size shrinkage used to prevent overfitting
-    max_depth=4,               # Maximum tree depth for base learners
+    n_estimators=50,          # Number of gradient boosted trees. Equivalent to number of boosting rounds
+    max_depth=7,               # Maximum tree depth for base learners
     min_child_weight=1,        # Minimum sum of instance weight (hessian) needed in a child
-    gamma=0,                   # Minimum loss reduction required to make a further partition on a leaf node of the tree
+    eta=0.1,                   # Step size shrinkage used in update to prevents overfitting
+    gamma=0.1,                   # Minimum loss reduction required to make a further partition on a leaf node of the tree
     subsample=0.8,             # Subsample ratio of the training instances
     colsample_bytree=0.8,      # Subsample ratio of columns when constructing each tree
     objective='binary:logistic', # Learning task parameter and the corresponding learning objective
-    reg_alpha=0.1,             # L1 regularization term on weights
-    reg_lambda=1,              # L2 regularization term on weights
-    scale_pos_weight=1,        # Balancing of positive and negative weights
+    reg_alpha=0,             # L1 regularization term on weights
+    reg_lambda=0,              # L2 regularization term on weights
+    scale_pos_weight=20,        # Balancing of positive and negative weights
     random_state=42            # Random number seed
 )
-"""
-rf_classifier = RandomForestClassifier(
-    n_estimators=500,
-    random_state=42,
-)
-#rf_classifier = xgb_classifier
+classifier = xgb_classifier
 
 # Create the pipeline
 pipeline = make_pipeline(
-    rf_classifier
+    classifier
 )
 
 # Split the data into training and validation sets
-X_train, X_val, y_train, y_val = train_test_split(X_train_df, y_train_df, test_size=0.3, random_state=42)
+X_train, X_val, y_train, y_val = train_test_split(X_train_df, y_train_df, test_size=0.8, random_state=42)
 # Fit the pipeline
 pipeline.fit(X_train, y_train)
 
