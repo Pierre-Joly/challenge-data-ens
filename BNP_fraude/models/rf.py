@@ -108,7 +108,7 @@ def preprocess(X_path,
 
 X_train_df, y_train_df, cash_price_mean, cash_price_std, nbr_of_prod_purchas_mean, nbr_of_prod_purchas_std = preprocess('data/X_train.csv', 'data/y_train.csv')
 
-X_train, X_val, y_train, y_val = train_test_split(X_train_df, y_train_df, test_size=0.8, random_state=42)
+X_train, X_val, y_train, y_val = train_test_split(X_train_df, y_train_df, test_size=0.2, random_state=42)
 # Define models and their respective hyperparameters
 
 xgb_classifier = xgb.XGBClassifier(
