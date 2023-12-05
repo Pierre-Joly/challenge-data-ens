@@ -8,12 +8,17 @@ from sklearn.pipeline import make_pipeline
 import gensim.downloader as api
 import logging
 import xgboost as xgb
+from hyperopt import STATUS_OK, STATUS_FAIL, Trials, fmin, hp, tpe
 
 # Initialize logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 Word2V = api.load("word2vec-google-news-300")
+
+def custom_eval(y_pred, dtrain):
+    y_true = dtrain.get_label()
+    return 'custom_avg_precision', average_precision_score(y_true, y_pred)
 
 def get_w2v_vector(sentence, model):
     vec = np.zeros(300)
@@ -103,60 +108,75 @@ def preprocess(X_path,
 
 X_train_df, y_train_df, cash_price_mean, cash_price_std, nbr_of_prod_purchas_mean, nbr_of_prod_purchas_std = preprocess('data/X_train.csv', 'data/y_train.csv')
 
+X_train, X_val, y_train, y_val = train_test_split(X_train_df, y_train_df, test_size=0.8, random_state=42)
 # Define models and their respective hyperparameters
 
 xgb_classifier = xgb.XGBClassifier(
-    n_estimators=500,          # Number of gradient boosted trees. Equivalent to number of boosting rounds
-    max_depth=10,               # Maximum tree depth for base learners
-    min_child_weight=0,        # Minimum sum of instance weight (hessian) needed in a child
-    eta=0.01,                   # Step size shrinkage used in update to prevents overfitting
+    n_estimators=50,          # Number of gradient boosted trees. Equivalent to number of boosting rounds
+    max_depth=5,               # Maximum tree depth for base learners
+    min_child_weight=1,        # Minimum sum of instance weight (hessian) needed in a child
+    eta=0,                   # Step size shrinkage used in update to prevents overfitting
     gamma=0.1,                   # Minimum loss reduction required to make a further partition on a leaf node of the tree
-    subsample=0.97,             # Subsample ratio of the training instances
-    colsample_bytree=0.98,      # Subsample ratio of columns when constructing each tree
+    subsample=0.8,             # Subsample ratio of the training instances
+    colsample_bytree=0.8,      # Subsample ratio of columns when constructing each tree
     objective='binary:logistic', # Learning task parameter and the corresponding learning objective
     reg_alpha=0,             # L1 regularization term on weights
     reg_lambda=0,              # L2 regularization term on weights
-    scale_pos_weight=23.5,        # Balancing of positive and negative weights
+    scale_pos_weight=20,        # Balancing of positive and negative weights
     random_state=42            # Random number seed
 )
 classifier = xgb_classifier
 
-# Create the pipeline
-pipeline = make_pipeline(
-    classifier
-)
+space = {
+    'max_depth': 5,
+    'gamma': hp.uniform('gamma', 1, 9),
+    'reg_alpha': hp.quniform('reg_alpha', 0, 10, 1),
+    'reg_lambda': hp.uniform('reg_lambda', 0, 1),
+    'colsample_bytree': hp.uniform('colsample_bytree', 0.5, 1),
+    'min_child_weight': hp.quniform('min_child_weight', 0, 10, 1),
+    'subsample': hp.uniform('subsample', 0.5, 1),
+    'eta': hp.uniform('eta', 0.01, 0.2),
+    'scale_pos_weight': 23,
+    'n_estimators': 500,  # Fixed value
+    'seed': 42  # Fixed value
+}
 
-# Split the data into training and validation sets
-X_train, X_val, y_train, y_val = train_test_split(X_train_df, y_train_df, test_size=0.8, random_state=42)
-# Fit the pipeline
-pipeline.fit(X_train, y_train)
+def objective(space):
+    clf = xgb.XGBClassifier(
+        n_estimators=int(space['n_estimators']),
+        max_depth=int(space['max_depth']),
+        min_child_weight=space['min_child_weight'],
+        eta=space['eta'],
+        gamma=space['gamma'],
+        subsample=space['subsample'],
+        colsample_bytree=space['colsample_bytree'],
+        objective='binary:logistic',
+        reg_alpha=space['reg_alpha'],
+        reg_lambda=space['reg_lambda'],
+        scale_pos_weight=space['scale_pos_weight'],
+        seed=int(space['seed'])
+    )
 
-# Evaluate the pipeline using average_precision_score
-print("Train score")
-y_pred = pipeline.predict_proba(X_train)
-average_precision = average_precision_score(y_train, y_pred[:, 1]) * 100
-logger.info(f"Average precision score: {average_precision}")
-print("Test score")
-y_pred = pipeline.predict_proba(X_val)
-average_precision = average_precision_score(y_val, y_pred[:, 1]) * 100
-logger.info(f"Average precision score: {average_precision}")
+    evaluation = [(X_train, y_train), (X_val, y_val)]
+    clf.fit(X_train, y_train,
+            eval_set=evaluation,
+            eval_metric='logloss', # or your custom_eval function
+            early_stopping_rounds=10,
+            verbose=False)
 
-# Save the trained model
-import joblib
-model_filename = "trained_rf_classifier.pkl"
-joblib.dump(pipeline, model_filename)
-logger.info(f"Trained model saved as {model_filename}")
+    # Predict on validation set
+    pred = clf.predict_proba(X_val)[:,1]  # Assuming you're dealing with binary classification
+    loss = -average_precision_score(y_val, pred)  # Negative sign because fmin tries to minimize the loss
 
-##### Prediction #####
-# Save prediction
-X, _, _, _, _, _ = preprocess('data/X_test.csv', 'data/y_test.csv', cash_price_mean, cash_price_std, nbr_of_prod_purchas_mean, nbr_of_prod_purchas_std)
+    return {'loss': loss, 'status': STATUS_OK}
 
-y_pred = pipeline.predict_proba(X)[:, 1]  # Get the probability of the positive class
-# Create a DataFrame for predictions
-prediction_df = pd.DataFrame({
-    'ID': X['ID'],  # Replace 'ID' with the actual ID column name in your validation set
-    'fraud_flag': y_pred
-})
-prediction_df.reset_index(inplace=True)
-prediction_df = prediction_df.rename(columns={'index': 'index'})
-prediction_df.to_csv('data/y_pred.csv', index=False)
+trials = Trials()
+
+best_hyperparams = fmin(fn = objective,
+                        space = space,
+                        algo = tpe.suggest,
+                        max_evals = 100,
+                        trials = trials)
+
+print("The best hyperparameters are : ","\n")
+print(best_hyperparams)
