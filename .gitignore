@@ -1,1 +1,9 @@
 *.npz
+*.csv
+*.tfevents
+.tfevents
+*.tsv
+*.DS_Store
+*.pkl
+*.pyc
+*.pth
